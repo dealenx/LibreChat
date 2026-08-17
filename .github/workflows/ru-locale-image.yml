@@ -1,0 +1,83 @@
+name: Docker ru-locale Image Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ru-locale
+    paths:
+      - 'api/**'
+      - 'client/**'
+      - 'config/**'
+      - 'skill/**'
+      - 'packages/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'Dockerfile'
+      - 'Dockerfile.multi'
+      - '.github/workflows/ru-locale-image.yml'
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 130
+    strategy:
+      matrix:
+        include:
+          - target: api-build
+            file: Dockerfile.multi
+            image_name: lc-ru-locale-api
+          - target: node
+            file: Dockerfile
+            image_name: lc-ru-locale
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare environment
+        run: |
+          cp .env.example .env
+
+      - name: Compute build metadata
+        run: |
+          echo "BUILD_COMMIT=${{ github.sha }}" >> $GITHUB_ENV
+          echo "BUILD_BRANCH=${{ github.ref_name }}" >> $GITHUB_ENV
+          echo "BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
+
+      - name: Build and push Docker images
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image_name }}:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image_name }}:ru-locale
+          platforms: linux/amd64,linux/arm64
+          target: ${{ matrix.target }}
+          build-args: |
+            BUILD_COMMIT=${{ env.BUILD_COMMIT }}
+            BUILD_BRANCH=${{ env.BUILD_BRANCH }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
