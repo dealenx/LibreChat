@@ -34,7 +34,7 @@ const mockStartupConfig = {
     emailLoginEnabled: true,
     socialLoginEnabled: true,
     serverDomain: 'mock-server',
-  },
+  } as Partial<TStartupConfig>,
 };
 
 const setup = ({
@@ -253,5 +253,7 @@ test('renders no brand block when logoMode is none', () => {
     },
   });
   expect(container.querySelector('img[src="assets/logo.svg"]')).not.toBeInTheDocument();
-  expect(container.querySelector('img[src="https://example.com/brand.png"]')).not.toBeInTheDocument();
+  expect(
+    container.querySelector('img[src="https://example.com/brand.png"]'),
+  ).not.toBeInTheDocument();
 });
