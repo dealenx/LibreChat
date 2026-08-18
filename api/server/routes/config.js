@@ -67,9 +67,25 @@ function buildPreLoginPayload() {
 
   const ldap = getLdapConfig();
 
+  /** White-label logo mode: 'image' (default) | 'text' | 'none'. Empty env → 'image'. */
+  const logoMode = process.env.APP_LOGO_MODE || 'image';
+  const logoUrl = process.env.APP_LOGO_URL;
+  const logoText = process.env.APP_LOGO_TEXT;
+
+  if (logoMode !== 'image' || logoUrl || logoText) {
+    logger.info(
+      `[config] white-label logo: mode=${logoMode}${logoUrl ? `, url=${logoUrl}` : ''}${
+        logoText ? `, text=${logoText}` : ''
+      }`,
+    );
+  }
+
   /** @type {Partial<TStartupConfig>} */
   const payload = {
     appTitle: process.env.APP_TITLE || 'LibreChat',
+    logoMode,
+    ...(logoUrl ? { logoUrl } : {}),
+    ...(logoText ? { logoText } : {}),
     discordLoginEnabled: !!process.env.DISCORD_CLIENT_ID && !!process.env.DISCORD_CLIENT_SECRET,
     facebookLoginEnabled: !!process.env.FACEBOOK_CLIENT_ID && !!process.env.FACEBOOK_CLIENT_SECRET,
     githubLoginEnabled: !!process.env.GITHUB_CLIENT_ID && !!process.env.GITHUB_CLIENT_SECRET,

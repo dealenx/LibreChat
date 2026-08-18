@@ -64,6 +64,7 @@ const initializeMCPs = require('./services/initializeMCPs');
 const configureSocialLogins = require('./socialLogins');
 const createSpaFallback = require('./utils/fallback');
 const { getAppConfig } = require('./services/Config');
+const { injectFavicon } = require('./utils/favicon');
 const staticCache = require('./utils/staticCache');
 const noIndex = require('./middleware/noIndex');
 const routes = require('./routes');
@@ -211,6 +212,12 @@ const startServer = async () => {
       logger.info(`Setting base href to ${baseHref}`);
       indexHTML = indexHTML.replace(/base href="\/"/, `base href="${baseHref}"`);
     }
+  }
+
+  // White-label: replace the bundled favicon links with a configured URL when set.
+  if (process.env.APP_FAVICON_URL) {
+    indexHTML = injectFavicon(indexHTML, process.env.APP_FAVICON_URL);
+    logger.info(`[config] white-label favicon set to ${process.env.APP_FAVICON_URL}`);
   }
 
   const sendIndexHtml = (req, res) => {

@@ -205,3 +205,53 @@ test('Navigates to / on successful login', async () => {
 
   waitFor(() => expect(window.location.pathname).toBe('/'));
 });
+
+test('renders the default bundled logo when logoMode is unset', () => {
+  const { container } = setup();
+  const img = container.querySelector('img[src="assets/logo.svg"]');
+  expect(img).toBeInTheDocument();
+});
+
+test('renders a custom logo URL when logoMode is image and logoUrl is set', () => {
+  const { container } = setup({
+    useGetStartupConfigReturnValue: {
+      ...mockStartupConfig,
+      data: {
+        ...mockStartupConfig.data,
+        logoMode: 'image',
+        logoUrl: 'https://example.com/brand.png',
+      },
+    },
+  });
+  const img = container.querySelector('img[src="https://example.com/brand.png"]');
+  expect(img).toBeInTheDocument();
+});
+
+test('renders the configured text phrase when logoMode is text', () => {
+  const { getByText } = setup({
+    useGetStartupConfigReturnValue: {
+      ...mockStartupConfig,
+      data: {
+        ...mockStartupConfig.data,
+        logoMode: 'text',
+        logoText: 'My White Label',
+      },
+    },
+  });
+  expect(getByText('My White Label')).toBeInTheDocument();
+  expect(document.querySelector('img[src="assets/logo.svg"]')).not.toBeInTheDocument();
+});
+
+test('renders no brand block when logoMode is none', () => {
+  const { container } = setup({
+    useGetStartupConfigReturnValue: {
+      ...mockStartupConfig,
+      data: {
+        ...mockStartupConfig.data,
+        logoMode: 'none',
+      },
+    },
+  });
+  expect(container.querySelector('img[src="assets/logo.svg"]')).not.toBeInTheDocument();
+  expect(container.querySelector('img[src="https://example.com/brand.png"]')).not.toBeInTheDocument();
+});

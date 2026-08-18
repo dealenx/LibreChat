@@ -1650,6 +1650,12 @@ export type StartupConfigContext = 'share';
 
 export type TStartupConfig = {
   appTitle: string;
+  /** White-label logo mode on the auth screen: 'image' (default) | 'text' | 'none'. */
+  logoMode?: 'image' | 'text' | 'none';
+  /** External URL for the auth-screen logo when `logoMode` is 'image'. */
+  logoUrl?: string;
+  /** Text phrase shown instead of the logo when `logoMode` is 'text'. */
+  logoText?: string;
   socialLogins?: string[];
   langfuseFanoutEnabled?: boolean;
   langfuseConnectionAccess?: boolean;

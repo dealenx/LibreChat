@@ -26,6 +26,37 @@ function AuthLayout({
 }) {
   const localize = useLocalize();
 
+  const logoMode = startupConfig?.logoMode ?? 'image';
+  const logoText = startupConfig?.logoText ?? startupConfig?.appTitle ?? 'LibreChat';
+
+  /**
+   * White-label logo rendering driven by /api/config startup fields:
+   * - 'none'  → hide the brand block entirely
+   * - 'text'  → show the configured text phrase instead of the image
+   * - 'image' (default) → show the configured URL or the bundled logo.svg
+   */
+  const renderBrandBlock = () => {
+    if (logoMode === 'none') {
+      return null;
+    }
+    if (logoMode === 'text') {
+      return (
+        <div className="mt-6 flex h-10 w-full items-center justify-center bg-cover">
+          <span className="text-2xl font-semibold text-text-primary">{logoText}</span>
+        </div>
+      );
+    }
+    return (
+      <div className="mt-6 h-10 w-full bg-cover">
+        <img
+          src={startupConfig?.logoUrl || 'assets/logo.svg'}
+          className="h-full w-full object-contain"
+          alt={localize('com_ui_logo', { 0: logoText })}
+        />
+      </div>
+    );
+  };
+
   const hasStartupConfigError = startupConfigError !== null && startupConfigError !== undefined;
   const DisplayError = () => {
     if (hasStartupConfigError) {
@@ -62,15 +93,7 @@ function AuthLayout({
   return (
     <div className="relative flex min-h-screen flex-col bg-surface-primary">
       <Banner />
-      <BlinkAnimation active={isFetching}>
-        <div className="mt-6 h-10 w-full bg-cover">
-          <img
-            src="assets/logo.svg"
-            className="h-full w-full object-contain"
-            alt={localize('com_ui_logo', { 0: startupConfig?.appTitle ?? 'LibreChat' })}
-          />
-        </div>
-      </BlinkAnimation>
+      <BlinkAnimation active={isFetching}>{renderBrandBlock()}</BlinkAnimation>
       <DisplayError />
       <div className="absolute bottom-0 left-0 md:m-4">
         <ThemeSelector />

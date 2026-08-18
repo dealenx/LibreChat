@@ -79,6 +79,9 @@ afterEach(() => {
     buildDate: null,
   });
   delete process.env.APP_TITLE;
+  delete process.env.APP_LOGO_MODE;
+  delete process.env.APP_LOGO_TEXT;
+  delete process.env.APP_LOGO_URL;
   delete process.env.CHECK_BALANCE;
   delete process.env.START_BALANCE;
   delete process.env.SANDPACK_BUNDLER_URL;
@@ -263,6 +266,31 @@ describe('GET /api/config', () => {
       expect(response.body.appTitle).toBe('Test App');
       expect(response.body).toHaveProperty('emailLoginEnabled');
       expect(response.body).toHaveProperty('serverDomain');
+    });
+
+    it('should include white-label logo fields from env', async () => {
+      mockGetAppConfig.mockResolvedValue(baseAppConfig);
+      process.env.APP_LOGO_MODE = 'text';
+      process.env.APP_LOGO_TEXT = 'My Brand';
+      process.env.APP_LOGO_URL = 'https://example.com/logo.png';
+      const app = createApp(null);
+
+      const response = await request(app).get('/api/config');
+
+      expect(response.body.logoMode).toBe('text');
+      expect(response.body.logoText).toBe('My Brand');
+      expect(response.body.logoUrl).toBe('https://example.com/logo.png');
+    });
+
+    it('should default logoMode to image when env is unset', async () => {
+      mockGetAppConfig.mockResolvedValue(baseAppConfig);
+      const app = createApp(null);
+
+      const response = await request(app).get('/api/config');
+
+      expect(response.body.logoMode).toBe('image');
+      expect(response.body).not.toHaveProperty('logoUrl');
+      expect(response.body).not.toHaveProperty('logoText');
     });
 
     it('should omit CloudFront cookie refresh from unauthenticated response (#12688)', async () => {
