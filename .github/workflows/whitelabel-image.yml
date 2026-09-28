@@ -40,9 +40,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: >-
-          [{"target":"api-build","file":"Dockerfile.multi","image_name":"lc-ru-locale-api"},
-           {"target":"node","file":"Dockerfile","image_name":"lc-ru-locale"}]
+        image: ${{ fromJSON('[{"target":"api-build","file":"Dockerfile.multi","image_name":"lc-ru-locale-api"},{"target":"node","file":"Dockerfile","image_name":"lc-ru-locale"}]') }}
         arch: [amd64, arm64]
 
     steps:
@@ -120,9 +118,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: >-
-          [{"target":"api-build","file":"Dockerfile.multi","image_name":"lc-ru-locale-api"},
-           {"target":"node","file":"Dockerfile","image_name":"lc-ru-locale"}]
+        image: ${{ fromJSON('[{"target":"api-build","file":"Dockerfile.multi","image_name":"lc-ru-locale-api"},{"target":"node","file":"Dockerfile","image_name":"lc-ru-locale"}]') }}
 
     steps:
       - name: Resolve GHCR image name
