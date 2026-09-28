@@ -82,7 +82,7 @@ const initializeMCPs = require('./services/initializeMCPs');
 const configureSocialLogins = require('./socialLogins');
 const createSpaFallback = require('./utils/fallback');
 const { getAppConfig } = require('./services/Config');
-const { injectFavicon } = require('./utils/favicon');
+const { injectFavicon, injectTitle } = require('./utils/favicon');
 const staticCache = require('./utils/staticCache');
 const optionalJwtAuth = require('./middleware/optionalJwtAuth');
 const noIndex = require('./middleware/noIndex');
@@ -538,6 +538,12 @@ if (cluster.isMaster) {
     if (process.env.APP_FAVICON_URL) {
       indexHTML = injectFavicon(indexHTML, process.env.APP_FAVICON_URL);
       logger.info(`[config] white-label favicon set to ${process.env.APP_FAVICON_URL}`);
+    }
+
+    /** White-label: replace the bundled <title> with the configured APP_TITLE. */
+    if (process.env.APP_TITLE) {
+      indexHTML = injectTitle(indexHTML, process.env.APP_TITLE);
+      logger.info(`[config] white-label title set to ${process.env.APP_TITLE}`);
     }
 
     /* The composer lays out against whether a footer bar sits beneath it, and

@@ -264,7 +264,7 @@ test('renders no brand block when logoMode is none', () => {
   expect(
     container.querySelector('img[src="https://example.com/brand.png"]'),
   ).not.toBeInTheDocument();
-
+});
 
 describe('OAuth rejection redirects', () => {
   const enterAt = (search: string) => {
