@@ -34,7 +34,7 @@ env:
 
 jobs:
   build:
-    name: Build ${{ matrix.image_name }} (${{ matrix.arch }})
+    name: Build ${{ matrix.image.image_name }} (${{ matrix.arch }})
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     timeout-minutes: 130
     strategy:
@@ -63,7 +63,7 @@ jobs:
 
       - name: Compute build metadata
         env:
-          IMAGE_NAME: ${{ matrix.image_name }}
+          IMAGE_NAME: ${{ matrix.image.image_name }}
         run: |
           set -euo pipefail
           printf 'GHCR_IMAGE=ghcr.io/%s/%s\n' "${GITHUB_REPOSITORY_OWNER,,}" "$IMAGE_NAME" >> "$GITHUB_ENV"
@@ -104,7 +104,7 @@ jobs:
       - name: Upload digest
         uses: actions/upload-artifact@v4
         with:
-          name: digests-${{ matrix.image_name }}-arch-${{ matrix.arch }}
+          name: digests-${{ matrix.image.image_name }}-arch-${{ matrix.arch }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
