@@ -1,4 +1,43 @@
-const { injectFavicon, injectTitle } = require('../favicon');
+const { injectFavicon, injectTitle, injectManifestIcons, injectManifestName } = require('../favicon');
+
+describe('injectManifestIcons', () => {
+  const baseManifest = JSON.stringify({
+    name: 'Chat',
+    icons: [{ src: 'assets/icon-192x192.png', sizes: '192x192', type: 'image/png' }],
+  });
+
+  it('returns the manifest unchanged when no URL is configured', () => {
+    expect(injectManifestIcons(baseManifest, '')).toBe(baseManifest);
+    expect(injectManifestIcons(baseManifest, undefined)).toBe(baseManifest);
+  });
+
+  it('replaces bundled icons with the configured URL at every install size', () => {
+    const result = JSON.parse(injectManifestIcons(baseManifest, 'https://example.com/ico.png'));
+    expect(result.icons).toHaveLength(4);
+    expect(result.icons.every((i) => i.src === 'https://example.com/ico.png')).toBe(true);
+    expect(result.icons.map((i) => i.sizes)).toEqual([
+      'any',
+      '192x192',
+      '512x512',
+      '512x512',
+    ]);
+    expect(result.icons.filter((i) => i.purpose === 'maskable')).toHaveLength(1);
+  });
+});
+
+describe('injectManifestName', () => {
+  const baseManifest = JSON.stringify({ name: 'Chat', short_name: 'Chat', icons: [] });
+
+  it('returns the manifest unchanged when no title is configured', () => {
+    expect(injectManifestName(baseManifest, '')).toBe(baseManifest);
+  });
+
+  it('rewrites the display name to the configured app title', () => {
+    const result = JSON.parse(injectManifestName(baseManifest, 'MimikkAi Chat'));
+    expect(result.name).toBe('MimikkAi Chat');
+    expect(result.short_name).toBe('MimikkAi Chat');
+  });
+});
 
 describe('injectFavicon', () => {
   const sampleHTML = `<!doctype html>

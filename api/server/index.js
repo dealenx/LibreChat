@@ -85,7 +85,7 @@ const { configureSubagentTaskRouting } = require('./services/Endpoints/agents/su
 const configureSocialLogins = require('./socialLogins');
 const createSpaFallback = require('./utils/fallback');
 const { getAppConfig } = require('./services/Config');
-const { injectFavicon, injectTitle } = require('./utils/favicon');
+const { injectFavicon, injectTitle, injectManifestIcons, injectManifestName } = require('./utils/favicon');
 const staticCache = require('./utils/staticCache');
 const noIndex = require('./middleware/noIndex');
 const routes = require('./routes');
@@ -377,6 +377,31 @@ const startServer = async () => {
   }
 
   app.get('/index.html', sendIndexHtml);
+
+  /** White-label: serve the PWA manifest with configured icon/name overrides. */
+  app.get('/manifest.webmanifest', (_req, res) => {
+    let manifest;
+    try {
+      const raw = fs.readFileSync(
+        path.join(appConfig.paths.dist, 'manifest.webmanifest'),
+        'utf8',
+      );
+      manifest = raw;
+    } catch {
+      // No manifest file: fall through to the static handler.
+      return res.status(404).end();
+    }
+    if (process.env.APP_FAVICON_URL) {
+      manifest = injectManifestIcons(manifest, process.env.APP_FAVICON_URL);
+    }
+    if (process.env.APP_TITLE) {
+      manifest = injectManifestName(manifest, process.env.APP_TITLE);
+    }
+    res.set(shellCache);
+    res.type('application/manifest+json');
+    res.send(manifest);
+  });
+
   app.use(staticCache(appConfig.paths.dist));
   app.use(staticCache(appConfig.paths.fonts));
   app.use(staticCache(appConfig.paths.assets));

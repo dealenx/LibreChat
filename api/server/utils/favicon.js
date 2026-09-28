@@ -40,4 +40,42 @@ function injectTitle(indexHTML, appTitle) {
   );
 }
 
-module.exports = { injectFavicon, injectTitle };
+/**
+ * White-label PWA manifest rewrite.
+ *
+ * Android/Chrome take the installed-app icon from manifest.webmanifest, not
+ * from the <link rel="icon"> the HTML rewrite replaces, so the manifest must
+ * be rewritten too or the install sheet shows the bundled LibreChat feather.
+ *
+ * A URL replaces every bundled icon entry; sizes are declared generically so
+ * Chrome picks the file for every target it needs (favicon, shortcut, mask).
+ */
+function injectManifestIcons(manifestJson, iconUrl) {
+  if (!iconUrl) {
+    return manifestJson;
+  }
+  const manifest = JSON.parse(manifestJson);
+  manifest.icons = [
+    { src: iconUrl, sizes: 'any', type: 'image/png' },
+    { src: iconUrl, sizes: '192x192', type: 'image/png' },
+    { src: iconUrl, sizes: '512x512', type: 'image/png', purpose: 'any' },
+    { src: iconUrl, sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+  ];
+  if (manifest.name && !process.env.APP_TITLE) {
+    // Name stays as bundled (Chat) unless APP_TITLE overrides it below.
+  }
+  return JSON.stringify(manifest);
+}
+
+/** Rewrite the manifest display name to APP_TITLE when configured. */
+function injectManifestName(manifestJson, appTitle) {
+  if (!appTitle) {
+    return manifestJson;
+  }
+  const manifest = JSON.parse(manifestJson);
+  manifest.name = appTitle;
+  manifest.short_name = appTitle;
+  return JSON.stringify(manifest);
+}
+
+module.exports = { injectFavicon, injectTitle, injectManifestIcons, injectManifestName };
