@@ -1,4 +1,4 @@
-const { injectFavicon, injectTitle, injectManifestIcons, injectManifestName } = require('../favicon');
+const { injectFavicon, injectTitle, injectManifestIcons, injectManifestName, injectManifestColors } = require('../favicon');
 
 describe('injectManifestIcons', () => {
   const baseManifest = JSON.stringify({
@@ -36,6 +36,32 @@ describe('injectManifestName', () => {
     const result = JSON.parse(injectManifestName(baseManifest, 'MimikkAi Chat'));
     expect(result.name).toBe('MimikkAi Chat');
     expect(result.short_name).toBe('MimikkAi Chat');
+  });
+});
+
+describe('injectManifestColors', () => {
+  const baseManifest = JSON.stringify({
+    name: 'Chat',
+    theme_color: '#009688',
+    background_color: '#000000',
+    icons: [],
+  });
+
+  it('returns the manifest unchanged when no colors are configured', () => {
+    expect(injectManifestColors(baseManifest, '', '')).toBe(baseManifest);
+    expect(injectManifestColors(baseManifest, undefined, undefined)).toBe(baseManifest);
+  });
+
+  it('overrides theme_color only', () => {
+    const result = JSON.parse(injectManifestColors(baseManifest, '#14b8a6', ''));
+    expect(result.theme_color).toBe('#14b8a6');
+    expect(result.background_color).toBe('#000000');
+  });
+
+  it('overrides both colors', () => {
+    const result = JSON.parse(injectManifestColors(baseManifest, '#14b8a6', '#ffffff'));
+    expect(result.theme_color).toBe('#14b8a6');
+    expect(result.background_color).toBe('#ffffff');
   });
 });
 

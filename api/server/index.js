@@ -85,7 +85,7 @@ const { configureSubagentTaskRouting } = require('./services/Endpoints/agents/su
 const configureSocialLogins = require('./socialLogins');
 const createSpaFallback = require('./utils/fallback');
 const { getAppConfig } = require('./services/Config');
-const { injectFavicon, injectTitle, injectManifestIcons, injectManifestName } = require('./utils/favicon');
+const { injectFavicon, injectTitle, injectManifestIcons, injectManifestName, injectManifestColors } = require('./utils/favicon');
 const staticCache = require('./utils/staticCache');
 const noIndex = require('./middleware/noIndex');
 const routes = require('./routes');
@@ -397,6 +397,11 @@ const startServer = async () => {
     if (process.env.APP_TITLE) {
       manifest = injectManifestName(manifest, process.env.APP_TITLE);
     }
+    manifest = injectManifestColors(
+      manifest,
+      process.env.PWA_THEME_COLOR,
+      process.env.PWA_BACKGROUND_COLOR,
+    );
     res.set(shellCache);
     res.type('application/manifest+json');
     res.send(manifest);

@@ -55,15 +55,17 @@ function injectManifestIcons(manifestJson, iconUrl) {
     return manifestJson;
   }
   const manifest = JSON.parse(manifestJson);
+  const type = iconUrl.toLowerCase().endsWith('.ico') ? 'image/x-icon' : 'image/png';
+  // Desktop Chrome/Windows pick the largest `purpose: any` icon for the window
+  // and taskbar; `maskable` covers the safe-zone circle crop on Android.
   manifest.icons = [
-    { src: iconUrl, sizes: 'any', type: 'image/png' },
-    { src: iconUrl, sizes: '192x192', type: 'image/png' },
-    { src: iconUrl, sizes: '512x512', type: 'image/png', purpose: 'any' },
-    { src: iconUrl, sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+    { src: iconUrl, sizes: 'any', type },
+    { src: iconUrl, sizes: '192x192', type },
+    { src: iconUrl, sizes: '512x512', type, purpose: 'any' },
+    { src: iconUrl, sizes: '512x512', type, purpose: 'maskable' },
   ];
-  if (manifest.name && !process.env.APP_TITLE) {
-    // Name stays as bundled (Chat) unless APP_TITLE overrides it below.
-  }
+  // A stable identity keeps an OS-level app entry consistent across deploys.
+  manifest.id = '/?source=pwa';
   return JSON.stringify(manifest);
 }
 
@@ -78,4 +80,23 @@ function injectManifestName(manifestJson, appTitle) {
   return JSON.stringify(manifest);
 }
 
-module.exports = { injectFavicon, injectTitle, injectManifestIcons, injectManifestName };
+/**
+ * Rewrite the manifest colors: theme_color paints the PWA titlebar (desktop
+ * Chrome/Edge and Android's app switcher), background_color is the splash
+ * screen behind the icon. Values must be valid CSS colors, e.g. '#14b8a6'.
+ */
+function injectManifestColors(manifestJson, themeColor, backgroundColor) {
+  if (!themeColor && !backgroundColor) {
+    return manifestJson;
+  }
+  const manifest = JSON.parse(manifestJson);
+  if (themeColor) {
+    manifest.theme_color = themeColor;
+  }
+  if (backgroundColor) {
+    manifest.background_color = backgroundColor;
+  }
+  return JSON.stringify(manifest);
+}
+
+module.exports = { injectFavicon, injectTitle, injectManifestIcons, injectManifestName, injectManifestColors };
