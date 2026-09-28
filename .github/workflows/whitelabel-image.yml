@@ -1,5 +1,9 @@
 name: Docker whitelabel Image Build
 
+# Per-architecture native builds merged into one manifest (upstream strategy):
+# arm64 builds on an ubuntu-24.04-arm runner, not under QEMU, where npm ci
+# died with SIGILL (exit 132) on native modules.
+
 on:
   workflow_dispatch:
   push:
@@ -25,27 +29,27 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  GHCR_IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}
+
 jobs:
   build:
-    runs-on: ubuntu-latest
+    name: Build ${{ matrix.image_name }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     timeout-minutes: 130
     strategy:
+      fail-fast: false
       matrix:
-        include:
-          - target: api-build
-            file: Dockerfile.multi
-            image_name: lc-ru-locale-api
-          - target: node
-            file: Dockerfile
-            image_name: lc-ru-locale
+        image: >-
+          [{"target":"api-build","file":"Dockerfile.multi","image_name":"lc-ru-locale-api"},
+           {"target":"node","file":"Dockerfile","image_name":"lc-ru-locale"}]
+        arch: [amd64, arm64]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-
+      # No QEMU: the runner is already the target architecture.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -57,27 +61,128 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Prepare environment
-        run: |
-          cp .env.example .env
+        run: cp .env.example .env
 
       - name: Compute build metadata
+        env:
+          IMAGE_NAME: ${{ matrix.image_name }}
         run: |
-          echo "BUILD_COMMIT=${{ github.sha }}" >> $GITHUB_ENV
-          echo "BUILD_BRANCH=${{ github.ref_name }}" >> $GITHUB_ENV
-          echo "BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
+          set -euo pipefail
+          printf 'GHCR_IMAGE=ghcr.io/%s/%s\n' "${GITHUB_REPOSITORY_OWNER,,}" "$IMAGE_NAME" >> "$GITHUB_ENV"
+          printf 'BUILD_COMMIT=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          printf 'BUILD_BRANCH=%s\n' "${{ github.ref_name }}" >> "$GITHUB_ENV"
+          printf 'BUILD_DATE=%s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
 
-      - name: Build and push Docker images
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ${{ matrix.file }}
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/${{ matrix.image_name }}:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/${{ matrix.image_name }}:whitelabel
-          platforms: linux/amd64,linux/arm64
-          target: ${{ matrix.target }}
+          file: ${{ matrix.image.file }}
+          platforms: linux/${{ matrix.arch }}
+          target: ${{ matrix.image.target }}
+          cache-from: type=registry,ref=${{ env.GHCR_IMAGE }}:buildcache-${{ matrix.arch }}
+          cache-to: type=registry,ref=${{ env.GHCR_IMAGE }}:buildcache-${{ matrix.arch }},mode=max
+          outputs: type=image,"name=${{ env.GHCR_IMAGE }}",push-by-digest=true,name-canonical=true,push=true
           build-args: |
             BUILD_COMMIT=${{ env.BUILD_COMMIT }}
             BUILD_BRANCH=${{ env.BUILD_BRANCH }}
             BUILD_DATE=${{ env.BUILD_DATE }}
+
+      - name: Export digest
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/digests
+          digest="$BUILD_DIGEST"
+          if [ -z "$digest" ]; then
+            echo "Build produced no digest." >&2
+            exit 1
+          fi
+          touch "/tmp/digests/${digest#sha256:}"
+
+      # The `-arch-` separator keeps one image's artifacts out of another's glob.
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.image_name }}-arch-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  merge:
+    name: Merge manifests (${{ matrix.image.image_name }})
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        image: >-
+          [{"target":"api-build","file":"Dockerfile.multi","image_name":"lc-ru-locale-api"},
+           {"target":"node","file":"Dockerfile","image_name":"lc-ru-locale"}]
+
+    steps:
+      - name: Resolve GHCR image name
+        env:
+          IMAGE_NAME: ${{ matrix.image.image_name }}
+        run: printf 'GHCR_IMAGE=ghcr.io/%s/%s\n' "${GITHUB_REPOSITORY_OWNER,,}" "$IMAGE_NAME" >> "$GITHUB_ENV"
+
+      - name: Download digests
+        uses: actions/download-artifact@v7
+        with:
+          pattern: digests-${{ matrix.image.image_name }}-arch-*
+          merge-multiple: true
+          path: /tmp/digests
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create manifest lists and push
+        working-directory: /tmp/digests
+        env:
+          EXPECTED_ARCHES: 'amd64 arm64'
+          TAG_SUFFIXES: |
+            ${{ github.sha }}
+            whitelabel
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          # One digest per architecture: too few publishes a manifest missing an
+          # architecture, too many means the artifact glob crossed images.
+          expected=$(wc -w <<< "$EXPECTED_ARCHES")
+          digests=(*)
+          if [ "${#digests[@]}" -ne "$expected" ]; then
+            echo "Expected $expected platform digests ($EXPECTED_ARCHES), found ${#digests[@]}: ${digests[*]}" >&2
+            exit 1
+          fi
+
+          tag_args=()
+          while IFS= read -r suffix; do
+            [ -n "$suffix" ] || continue
+            tag_args+=(-t "IMAGE:${suffix}")
+          done <<< "$TAG_SUFFIXES"
+          if [ "${#tag_args[@]}" -eq 0 ]; then
+            echo "No tag suffixes supplied; refusing to publish an untagged manifest." >&2
+            exit 1
+          fi
+
+          echo "Merging ${#digests[@]} digests into $(( ${#tag_args[@]} / 2 )) tag(s)"
+          docker buildx imagetools create \
+            "${tag_args[@]/IMAGE:/${GHCR_IMAGE}:}" \
+            "${digests[@]/#/${GHCR_IMAGE}@sha256:}"
+
+      - name: Inspect image
+        env:
+          TAG_SUFFIXES: ${{ github.sha }}
+        run: docker buildx imagetools inspect "${GHCR_IMAGE}:${TAG_SUFFIXES}"
