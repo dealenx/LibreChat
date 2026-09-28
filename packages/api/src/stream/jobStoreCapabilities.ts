@@ -8,7 +8,13 @@ import type { IJobStore, IJobStoreV2 } from './interfaces/IJobStore';
  * while rejecting an implementation that cannot provide the atomic guarantees
  * required by the current generation manager.
  */
-export const JOB_STORE_V2_REQUIRED_METHODS = [
+type MethodKeys<T> = {
+  [Key in keyof T]-?: NonNullable<T[Key]> extends (...args: never[]) => unknown ? Key : never;
+}[keyof T];
+
+export type JobStoreV2RequiredMethod = Exclude<MethodKeys<IJobStoreV2>, keyof IJobStore>;
+
+export const JOB_STORE_V2_REQUIRED_METHODS: readonly JobStoreV2RequiredMethod[] = [
   'acknowledgeReplacedJobs',
   'markProviderExecutionDrained',
   'beginProviderExecution',
@@ -36,13 +42,8 @@ export const JOB_STORE_V2_REQUIRED_METHODS = [
   'claimFirstSubscriber',
   'detachSubscriber',
   'hasActiveSubscriber',
-] as const satisfies ReadonlyArray<keyof IJobStoreV2>;
+];
 
-export type JobStoreV2RequiredMethod = (typeof JOB_STORE_V2_REQUIRED_METHODS)[number];
-
-type MethodKeys<T> = {
-  [Key in keyof T]-?: NonNullable<T[Key]> extends (...args: never[]) => unknown ? Key : never;
-}[keyof T];
 type V2OnlyMethod = Exclude<MethodKeys<IJobStoreV2>, keyof IJobStore>;
 type SameUnion<Left, Right> = [Left] extends [Right]
   ? [Right] extends [Left]
