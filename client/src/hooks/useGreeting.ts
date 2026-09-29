@@ -13,7 +13,10 @@ export default function useGreeting(name?: string, fallback = ''): string {
   const localize = useLocalize();
   const [greetingKey, setGreetingKey] = useState<TranslationKeys | null>(null);
 
-  const hasName = Boolean(name);
+  // A stored "name" can be a raw email address (registration without a display
+  // name); personalizing a greeting with an email reads badly. Treat it as absent.
+  const displayName = name != null && !name.includes('@') ? name : undefined;
+  const hasName = Boolean(displayName);
 
   useEffect(() => {
     let timeoutId: ReturnType<typeof setTimeout>;
@@ -46,5 +49,5 @@ export default function useGreeting(name?: string, fallback = ''): string {
     return fallback;
   }
 
-  return localize(greetingKey, { name });
+  return localize(greetingKey, { name: displayName });
 }
