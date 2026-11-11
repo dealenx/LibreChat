@@ -1,5 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { CODE_APPROVAL_MODES } from 'librechat-data-provider';
+import { reasoningOverrideSchema } from 'librechat-data-provider';
+import {
+  Constants,
+  CODE_APPROVAL_MODES,
+  MAX_FILE_TEXT_PREVIEW_LENGTH,
+} from 'librechat-data-provider';
+import type { TReasoningOverride } from 'librechat-data-provider';
 import type { CodeApprovalMode } from 'librechat-data-provider';
 import type { FilterQuery, Model, Types } from 'mongoose';
 import type {
@@ -113,6 +119,7 @@ export interface EnqueueAgentQueuedTurnInput extends AgentQueuedTurnConversation
   codeApprovalMode?: CodeApprovalMode;
   /** Internal publication fence, committed with approval-bearing rows. */
   deliveryReservation?: { queuedTurnId: string; deliveryKey: string };
+  reasoningOverride?: TReasoningOverride;
   expectedPredecessorCreatedAt?: number;
   priority?: boolean;
   availableAt?: Date;
@@ -178,7 +185,7 @@ export interface AgentQueuedTurnPredecessor {
 
 function getRootLineagePredecessorId(parentMessageId: string): string {
   return `${ROOT_LINEAGE_PREDECESSOR_PREFIX}${createHash('sha256')
-    .update(requireBoundedString(parentMessageId, 256))
+    .update(requireBoundedString(parentMessageId, Constants.MAX_RESPONSE_MESSAGE_ID_LENGTH))
     .digest('base64url')}`;
 }
 
@@ -312,12 +319,6 @@ export interface AgentQueuedTurnMethods {
       allowLegacyPredecessorInference?: boolean;
     },
   ) => Promise<AgentQueuedTurnPredecessor | null>;
-  drainAgentQueuedTurns: (
-    input: AgentQueuedTurnOwnerScope & {
-      conversationId?: string;
-      settledAt?: Date;
-    },
-  ) => Promise<number>;
   deleteAgentQueuedTurns: (
     input: AgentQueuedTurnOwnerScope & { conversationId?: string },
   ) => Promise<number>;
@@ -434,8 +435,16 @@ function normalizeFiles(files: readonly AgentQueuedTurnFileRef[] | undefined) {
       continue;
     }
     seen.add(fileId);
+    const textPreview = file.textPreview;
+    if (
+      textPreview != null &&
+      (typeof textPreview !== 'string' || textPreview.length > MAX_FILE_TEXT_PREVIEW_LENGTH)
+    ) {
+      throw new TypeError('Agent queued turn file preview has an invalid length');
+    }
     normalized.push({
       file_id: fileId,
+      ...(textPreview != null && { textPreview }),
       ...(normalizeOptionalString(file.type, 256) != null && {
         type: normalizeOptionalString(file.type, 256),
       }),
@@ -521,6 +530,15 @@ function normalizeText(text: string): string {
   return normalized;
 }
 
+function normalizeReasoningOverride(
+  reasoningOverride: TReasoningOverride | undefined,
+): TReasoningOverride | undefined {
+  if (reasoningOverride == null) {
+    return undefined;
+  }
+  return reasoningOverrideSchema.parse(reasoningOverride);
+}
+
 function normalizePredecessor(value: number | undefined): number | undefined {
   if (value == null) {
     return undefined;
@@ -541,7 +559,10 @@ function requireCodeApprovalMode(mode: CodeApprovalMode): CodeApprovalMode {
 function normalizeEnqueue(input: EnqueueAgentQueuedTurnInput) {
   const normalized = {
     agentId: requireBoundedString(input.agentId, 256),
-    parentMessageId: requireBoundedString(input.parentMessageId, 256),
+    parentMessageId: requireBoundedString(
+      input.parentMessageId,
+      Constants.MAX_RESPONSE_MESSAGE_ID_LENGTH,
+    ),
     clientRequestId: requireBoundedString(input.clientRequestId, 128),
     text: normalizeText(input.text),
     files: normalizeFiles(input.files),
@@ -550,6 +571,7 @@ function normalizeEnqueue(input: EnqueueAgentQueuedTurnInput) {
     ...(input.codeApprovalMode != null && {
       codeApprovalMode: requireCodeApprovalMode(input.codeApprovalMode),
     }),
+    reasoningOverride: normalizeReasoningOverride(input.reasoningOverride),
     expectedPredecessorCreatedAt: normalizePredecessor(input.expectedPredecessorCreatedAt),
     priority: input.priority === true,
   };
@@ -560,11 +582,12 @@ function normalizeEnqueue(input: EnqueueAgentQueuedTurnInput) {
 }
 
 function fingerprint(payload: ReturnType<typeof normalizeEnqueue>): string {
-  /** Delivery routing is display metadata, not user intent. Excluding it keeps
-   * retries compatible with replicas deployed before the field was persisted. */
+  /** Display metadata is not user intent; retries must survive mixed-version replicas. */
   const stableIntent = {
     ...payload,
-    files: payload.files?.map(({ llmDeliveryPath: _displayMetadata, ...file }) => file),
+    files: payload.files?.map(
+      ({ llmDeliveryPath: _deliveryPath, textPreview: _preview, ...file }) => file,
+    ),
   };
   return createHash('sha256').update(JSON.stringify(stableIntent)).digest('base64url');
 }
@@ -623,6 +646,7 @@ function toRecord(turn: IAgentQueuedTurn): AgentQueuedTurnRecord {
     ...(turn.quotes != null && { quotes: turn.quotes }),
     ...(turn.manualSkills != null && { manualSkills: turn.manualSkills }),
     ...(turn.codeApprovalMode != null && { codeApprovalMode: turn.codeApprovalMode }),
+    ...(turn.reasoningOverride != null && { reasoningOverride: turn.reasoningOverride }),
     ...(turn.expectedPredecessorCreatedAt != null && {
       expectedPredecessorCreatedAt: turn.expectedPredecessorCreatedAt,
     }),
@@ -685,6 +709,7 @@ function toActiveRecord(turn: IAgentQueuedTurn): AgentQueuedTurnActiveRecord {
     ...(record.quotes != null && { quotes: record.quotes }),
     ...(record.manualSkills != null && { manualSkills: record.manualSkills }),
     ...(record.codeApprovalMode != null && { codeApprovalMode: record.codeApprovalMode }),
+    ...(record.reasoningOverride != null && { reasoningOverride: record.reasoningOverride }),
     ...(record.expectedPredecessorCreatedAt != null && {
       expectedPredecessorCreatedAt: record.expectedPredecessorCreatedAt,
     }),
@@ -2574,7 +2599,10 @@ export function createAgentQueuedTurnMethods(
       throw new TypeError('Agent queued turn sequence must be a positive integer');
     }
     const rootEpoch = normalizePredecessor(input.expectedPredecessorCreatedAt);
-    const rootParentMessageId = requireBoundedString(input.rootParentMessageId, 256);
+    const rootParentMessageId = requireBoundedString(
+      input.rootParentMessageId,
+      Constants.MAX_RESPONSE_MESSAGE_ID_LENGTH,
+    );
     const rootLineagePredecessorId = getRootLineagePredecessorId(rootParentMessageId);
     const predecessors = await Turn()
       .find({
@@ -2663,57 +2691,6 @@ export function createAgentQueuedTurnMethods(
       lineagePredecessorId,
       ...(effectivePredecessorCreatedAt != null && { effectivePredecessorCreatedAt }),
     };
-  }
-
-  async function drainAgentQueuedTurns(
-    input: AgentQueuedTurnOwnerScope & {
-      conversationId?: string;
-      settledAt?: Date;
-    },
-  ): Promise<number> {
-    const settledAt = input.settledAt ?? new Date();
-    const result = await Turn().updateMany(
-      {
-        ...ownerScope(input),
-        ...(input.conversationId != null && {
-          conversationId: requireBoundedString(input.conversationId, 256),
-        }),
-        status: { $in: ['queued', 'claimed'] },
-        admissionStartedAt: { $exists: false },
-      },
-      {
-        $set: {
-          status: 'cancelled',
-          terminalReceipt: {
-            outcome: 'cancelled',
-            settledAt,
-            failure: {
-              code: 'OWNER_DRAINED',
-              message: 'Queued turn owner was drained',
-            },
-          },
-        },
-        $unset: {
-          activeSlot: 1,
-          admissionSlot: 1,
-          claimId: 1,
-          claimBy: 1,
-          claimUntil: 1,
-        },
-      },
-    );
-    await Turn().updateMany(
-      {
-        ...ownerScope(input),
-        ...(input.conversationId != null && {
-          conversationId: requireBoundedString(input.conversationId, 256),
-        }),
-        status: 'cancelled',
-        deliveryKey: { $exists: false },
-      },
-      { $set: { deliveryState: 'retired' } },
-    );
-    return result.modifiedCount;
   }
 
   async function deleteAgentQueuedTurns(
@@ -2998,7 +2975,6 @@ export function createAgentQueuedTurnMethods(
     hasAgentQueuedTurnAdmissionReceipt,
     deadLetterAgentQueuedTurn,
     getEffectiveAgentQueuedTurnPredecessor,
-    drainAgentQueuedTurns,
     deleteAgentQueuedTurns,
     prepareAgentQueuedTurnConversationDeletion,
     deletePreparedAgentQueuedTurnConversations,

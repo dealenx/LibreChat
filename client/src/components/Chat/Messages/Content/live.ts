@@ -1,20 +1,33 @@
-import { Tools, Constants, ContentTypes, stripToolCallErrorPrefix } from 'librechat-data-provider';
+import { boundIntentLabel, getToolCallIntent } from '@librechat/chat/react';
+import {
+  Constants,
+  ContentTypes,
+  isOpaqueReasoning,
+  readableReasoning,
+  stripToolCallErrorPrefix,
+} from 'librechat-data-provider';
+import {
+  hasPendingApprovalInPart,
+  ASK_USER_QUESTION,
+  getSubmittedAskAnswer,
+  getToolDisplayLabel,
+  parseToolName,
+  getToolIconName,
+  getToolMeta,
+  summarizeSpan,
+  getBatchActivityLabelPart,
+  getActivityLabelText,
+} from '@librechat/chat';
 import type {
   Agents,
   TAttachment,
   PartMetadata,
   TMessageContentParts,
 } from 'librechat-data-provider';
+import type { SpanOutcome, SpanSummary } from '@librechat/chat';
 import type { TOptions } from 'i18next';
-import type { SpanOutcome, SpanSummary } from './outcome';
 import type { TranslationKeys } from '~/hooks';
-import { getBatchActivityLabelPart, getActivityLabelText } from '~/utils/activityLabels';
-import { hasPendingApprovalInPart, hasPendingAuthInPart } from '~/utils/groupToolCalls';
-import { ASK_USER_QUESTION, getSubmittedAskAnswer } from '~/utils/approval';
-import { getToolDisplayLabel, parseToolName } from '~/utils/toolLabels';
-import { boundIntentLabel, getToolCallIntent } from './Parts/intent';
-import { isBashProgrammaticToolCall } from './routing';
-import { getToolMeta, summarizeSpan } from './outcome';
+import { hasPendingAuthInPart } from '~/utils/groupToolCalls';
 import { isError } from './ToolOutput';
 
 /** How often a live fold's header may repaint. A streamed intent moves the
@@ -43,13 +56,15 @@ export type LiveActivity = {
   isBackgroundTaskCheck?: boolean;
   /** Failed and stopped calls anywhere in the span, not just the newest line. */
   outcome: SpanOutcome;
+  /** All calls in the span, including ones still running. */
+  total: number;
 };
 
 type Localize = (phraseKey: TranslationKeys, options?: TOptions) => string;
 
 type LiveToolCall = Agents.ToolCall & { subagent_content?: TMessageContentParts[] } & Pick<
     PartMetadata,
-    'runStepStatus'
+    'runStepStatus' | 'runStepClosedAt' | 'backgrounded'
   > & { progress?: number };
 
 /**
@@ -130,6 +145,14 @@ function toolCallLine(
         meta.background === 'running' ? 'com_ui_background_running' : 'com_ui_background_finished',
       ),
       generic: false,
+    };
+  }
+  if (meta?.preparing === true) {
+    return {
+      text: label
+        ? localize('com_ui_tool_preparing', { 0: label })
+        : localize('com_assistants_preparing_action'),
+      generic: true,
     };
   }
   if (intent != null) {
@@ -246,7 +269,7 @@ export function getSpanIconNames(parts: ReadonlyArray<TMessageContentParts | und
     const toolCall = part == null ? undefined : getStandardToolCall(part);
     if (toolCall != null) {
       const name = toolCall.name ?? '';
-      icons.add(isBashProgrammaticToolCall(name, toolCall.args) ? Tools.bash_tool : name);
+      icons.add(getToolIconName(name, toolCall.args, toolCall.output));
       continue;
     }
     const legacy = part == null ? null : getToolMeta(part);
@@ -272,6 +295,7 @@ function isAwaitingStartup(
     !meta.failed &&
     !meta.cancelled &&
     meta.background == null &&
+    !meta.preparing &&
     getToolCallIntent(toolCall.args) == null
   );
 }
@@ -298,8 +322,13 @@ function newestLine(
        *  Unless the fold is open: the text is on screen then, and a header
        *  repeating a line of it under the reader's eyes is noise, so the
        *  header keeps to the thought's label. */
-      const reasoning = typeof part.think === 'string' ? part.think : (part.think?.value ?? '');
-      const label = part.reasoning_label?.trim();
+      const think = typeof part.think === 'string' ? part.think : (part.think?.value ?? '');
+      /** Encrypted reasoning has no sentence to preview, and a label generated
+       *  from it before labels skipped encoded payloads describes the payload. */
+      const opaque = isOpaqueReasoning(think);
+      /** The live header only exists while the run streams. */
+      const reasoning = readableReasoning(think, true);
+      const label = opaque ? undefined : part.reasoning_label?.trim();
       if (preferLabels) {
         /** Only a generated label will do: the generic thinking line is what
          *  the grouped thought row itself says. */
@@ -312,7 +341,7 @@ function newestLine(
       if (sentence != null) {
         return { text: sentence, source: `think:${position}`, comboCount: 1 };
       }
-      if (label || reasoning.trim()) {
+      if (label || think.trim()) {
         return {
           text: label || localize('com_ui_thinking'),
           source: `think:${position}`,
@@ -394,6 +423,7 @@ export function getLiveActivity(
   return {
     ...newestLine(parts, localize, serverNames, span, preferLabels),
     outcome: { failed: span.failed, cancelled: span.cancelled },
+    total: span.total,
     iconNames: getSpanIconNames(parts),
   };
 }
@@ -404,6 +434,8 @@ export type FailedLine = {
   /** The first line of what the tool returned, with the error prefix removed. */
   detail: string;
   iconName: string;
+  /** The failure time, if the host recorded it. Detached tasks use settlement, not dispatch. */
+  failedAt?: number | Date;
 };
 
 const PROCESSING_PREFIX = /^Error processing tool:?\s*/i;
@@ -457,10 +489,14 @@ export function getFailedLines(
     const subject =
       getToolCallIntent(toolCall.args) ??
       (parsed.mcpServer ? parsed.toolName : getToolDisplayLabel(parsed.raw, localize, serverNames));
+    const failedAt =
+      toolCall.backgroundTask?.settledAt ??
+      (meta.background != null || toolCall.backgrounded ? undefined : toolCall.runStepClosedAt);
     lines.push({
       text: subject ? localize('com_ui_failed_subject', { 0: subject }) : localize('com_ui_failed'),
       detail: firstErrorLine(toolCall.output),
       iconName: meta.iconName,
+      ...(failedAt != null && { failedAt }),
     });
   }
   return lines;

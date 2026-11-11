@@ -1,36 +1,39 @@
 import { Types } from 'mongoose';
 import {
-  enqueueAgentQueuedTurnSchema,
-  isAgentsEndpoint,
-  isEphemeralAgentId,
-} from 'librechat-data-provider';
-import {
   logger,
   AgentQueuedTurnCapacityError,
   AgentQueuedTurnConflictError,
   AgentQueuedTurnLaneRetiredError,
 } from '@librechat/data-schemas';
+import {
+  enqueueAgentQueuedTurnSchema,
+  MAX_AGENT_QUEUED_TURN_TEXT_LENGTH,
+  isAgentsEndpoint,
+  isEphemeralAgentId,
+} from 'librechat-data-provider';
+import type {
+  CodeApprovalMode,
+  TAgentQueuedTurnFileRef,
+  TAgentQueuedTurnReceipt,
+  TFile,
+  TReasoningOverride,
+} from 'librechat-data-provider';
 import type {
   AgentQueuedTurnActiveRecord,
   AgentQueuedTurnMethods,
   AgentQueuedTurnRecord,
   IMongoFile,
 } from '@librechat/data-schemas';
-import type {
-  CodeApprovalMode,
-  TAgentQueuedTurnFileRef,
-  TAgentQueuedTurnReceipt,
-  TFile,
-} from 'librechat-data-provider';
 import type { Request, RequestHandler } from 'express';
 import type { AgentQueuedTurnLifecycle } from './queuedTurns';
 import type { SteerFileFetcher } from './steering/request';
 import type { SteerRequestUser } from './steering/refs';
 import { buildOwnerFilter, collectFileIds, toSteerFileRef } from './steering/refs';
 import { createQueuedTurnDeliveryReservation } from './queuedTurns';
+import { sanitizeFileForTransmit } from '../utils/message';
 import { getReferencedQuotes } from '~/utils';
 
-const MAX_QUEUED_TURN_LENGTH = 16_000;
+const MAX_QUEUED_TURN_LENGTH = MAX_AGENT_QUEUED_TURN_TEXT_LENGTH;
 const MAX_QUEUED_TURN_FILES = 10;
 const CAPABILITY = { supported: true, durability: 'durable', protocolVersion: 2 } as const;
 
@@ -92,6 +95,7 @@ function receipt(
     ...(turn.quotes != null && { quotes: turn.quotes }),
     ...(turn.manualSkills != null && { manualSkills: turn.manualSkills }),
     ...(turn.codeApprovalMode != null && { codeApprovalMode: turn.codeApprovalMode }),
+    ...(turn.reasoningOverride != null && { reasoningOverride: turn.reasoningOverride }),
     priority: turn.priority,
     ...(turn.expectedPredecessorCreatedAt != null && {
       expectedPredecessorCreatedAt: turn.expectedPredecessorCreatedAt,
@@ -138,6 +142,13 @@ function uniqueStrings(values: readonly string[] | undefined): string[] | undefi
   return values == null ? undefined : [...new Set(values)];
 }
 
+function sameReasoningOverride(
+  left: TReasoningOverride | undefined,
+  right: TReasoningOverride | undefined,
+): boolean {
+  return left?.key === right?.key && left?.value === right?.value;
+}
+
 function matchesReplayIntent(
   turn: AgentQueuedTurnRecord,
   input: {
@@ -146,6 +157,7 @@ function matchesReplayIntent(
     files?: readonly TAgentQueuedTurnFileRef[];
     manualSkills?: readonly string[];
     codeApprovalMode?: CodeApprovalMode;
+    reasoningOverride?: TReasoningOverride;
     expectedPredecessorCreatedAt?: number;
   },
   text: string,
@@ -162,6 +174,7 @@ function matchesReplayIntent(
     sameStrings(turn.quotes, quotes) &&
     sameStrings(turn.manualSkills, uniqueStrings(input.manualSkills)) &&
     turn.codeApprovalMode === input.codeApprovalMode &&
+    sameReasoningOverride(turn.reasoningOverride, input.reasoningOverride) &&
     turn.expectedPredecessorCreatedAt === input.expectedPredecessorCreatedAt
   );
 }
@@ -230,7 +243,8 @@ async function resolveFiles(
   const docs = (await deps.getFiles(filter, {}, {})) ?? [];
   const byId = new Map(docs.map((doc: IMongoFile) => [doc.file_id, doc]));
   const resolved = ids.flatMap((id): TAgentQueuedTurnFileRef[] => {
-    const ref = toSteerFileRef(byId.get(id));
+    const doc = byId.get(id);
+    const ref = doc == null ? null : toSteerFileRef(sanitizeFileForTransmit(doc));
     return ref == null ? [] : [{ ...ref, file_id: id }];
   });
   if (resolved.length !== ids.length) {
@@ -350,6 +364,7 @@ export async function handleAgentQueuedTurnEnqueue(
       ...(quotes != null && { quotes }),
       ...(input.manualSkills != null && { manualSkills: input.manualSkills }),
       ...(input.codeApprovalMode != null && { codeApprovalMode: input.codeApprovalMode }),
+      ...(input.reasoningOverride != null && { reasoningOverride: input.reasoningOverride }),
       priority: false,
       ...(input.expectedPredecessorCreatedAt != null && {
         expectedPredecessorCreatedAt: input.expectedPredecessorCreatedAt,
